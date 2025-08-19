@@ -1,5 +1,8 @@
+import { parse } from "acorn";
 import fs from "node:fs";
 import path from "node:path";
+import { transformer } from "./transformer";
+import * as astring from "astring";
 
 /**
  * Примерный алгоритм работы бандлера:
@@ -17,7 +20,7 @@ import path from "node:path";
  * @param {string} entryPath - путь к entry бандлинга
  */
 export function bundle(entryPath) {
-  const entryFile = fs.readFileSync(entryPath, "utf-8");
+  const entryFile = transform(fs.readFileSync(entryPath, "utf-8"));
   const requireCalls = searchRequireCalls(entryFile).map((modulePath) => ({
     modulePath,
     parent: entryPath,
@@ -31,22 +34,24 @@ export function bundle(entryPath) {
     return modules[id].exports;
   }
   `;
-  const entry = `(function(require, module) { ${entryFile} })(require, modules)`
+  const entry = `(function(require, module) { ${entryFile} })(require, modules)`;
 
   while (requireCalls.length) {
     const { modulePath, parent } = requireCalls.pop();
     const resolvedModulePath = path.resolve(path.dirname(parent), modulePath);
 
-    const moduleCode = fs.readFileSync(resolvedModulePath, "utf-8");
+    const moduleCode = transform(fs.readFileSync(resolvedModulePath, "utf-8"));
     const moduleRequireCalls = searchRequireCalls(moduleCode).map((m) => ({
       modulePath: m,
       parent: resolvedModulePath,
     }));
     requireCalls.push(...moduleRequireCalls);
-    modules.push(`modules['${modulePath}'] = function(require, module) { ${moduleCode} };`);
+    modules.push(
+      `modules['${modulePath}'] = function(require, module) { ${moduleCode} };`
+    );
   }
 
-  return `${header}\n${modules.join('\n')}\n${entry}`;
+  return `${header}\n${modules.join("\n")}\n${entry}`;
 }
 
 /**
@@ -58,4 +63,10 @@ function searchRequireCalls(code) {
   return [...code.matchAll(/require\(('|")(.*)('|")\)/g)].map(
     (item) => item[2]
   );
+}
+
+function transform(code) {
+  const ast = parse(code);
+  const transformedAst = transformer(ast);
+  return astring.generate(transformedAst);
 }
